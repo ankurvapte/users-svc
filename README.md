@@ -14,7 +14,6 @@ app/
 │   └── use_cases.py            # UserService: list, get, create, update
 ├── infrastructure/
 │   ├── postgres_repository.py  # PostgreSQL adapter (used when DATABASE_URL is set)
-│   ├── schema.sql              # users table, applied on first connect
 │   └── json_repository.py      # JSON file adapter (used when DATABASE_URL is not set)
 ├── api/
 │   ├── schemas.py              # Public API contract (request + response models)
@@ -23,8 +22,10 @@ app/
 ├── config.py                   # Settings from environment variables
 ├── logging_setup.py            # JSON logs to stdout
 └── main.py                     # Composition root: wires layers together
+migrations/versions/            # Alembic migrations: the users table schema, in order
+alembic.ini                     # Alembic config (the URL comes from DATABASE_URL)
 data/users.json                 # 5 seed users (4 active, 1 disabled); SEED_FILE for Postgres
-tests/                          # Unit tests (no deps) + API tests (FastAPI)
+tests/                          # Unit tests (no deps) + API tests (FastAPI) + Postgres/migration tests
 ```
 
 Dependencies point inward: `api → application → domain`, and
@@ -79,12 +80,16 @@ curl -X PATCH localhost:8081/api/v1/users/<id> \
   -H 'content-type: application/json' -d '{"status":"disabled"}'
 ```
 
-Compose starts two containers: `users-svc` and its own Postgres, `users-db`
-(database per service). users-svc waits until the database is healthy. On
-first connect it creates the `users` table and, because `SEED_FILE` is set,
-loads the 5 seed users into the empty table. Data lives on the named volume
-`users-db-data`, so it survives `restart` and `down`/`up`. To reset to the
-seed data, run `docker compose down -v`.
+Compose starts, in order:
+1. `users-db`: its own Postgres (database per service).
+2. `users-migrate`: a one-shot job from the same image that runs
+   `alembic upgrade head` and exits. It shows as `Exited (0)` in
+   `docker compose ps -a`; that's expected.
+3. `users-svc`: starts only if the migrations succeeded. On first connect,
+   because `SEED_FILE` is set, it loads the 5 seed users into the empty table.
+
+Data lives on the named volume `users-db-data`, so it survives `restart` and
+`down`/`up`. To reset to the seed data, run `docker compose down -v`.
 
 The database publishes no host port. To look inside:
 ```bash
@@ -112,19 +117,34 @@ pytest                                                        # all tests, needs
 ```
 Tests work on temporary copies of the seed file, so they never modify it.
 
-The Postgres adapter tests need a throwaway database (they drop the table) and
-are skipped without one:
+The Postgres adapter and migration tests need a throwaway database (they drop
+the tables and run the migrations from scratch) and are skipped without one:
 ```bash
 docker run --rm -d --name users-test-db -e POSTGRES_PASSWORD=test -p 55432:5432 postgres:17-alpine
 TEST_DATABASE_URL=postgresql://postgres:test@localhost:55432/postgres pytest tests/test_postgres_repository.py
 docker stop users-test-db
 ```
 
+## Change the schema
+
+The schema lives only in `migrations/versions/`, applied in order and recorded
+in the `alembic_version` table. Never edit a migration that has been deployed;
+add a new one:
+```bash
+alembic revision -m "add last_login_at to users" --rev-id 0002   # no database needed
+# write the SQL in upgrade() and downgrade() with op.execute(...)
+docker compose up --build                                         # users-migrate applies it
+```
+Expand, then contract: every migration must keep both the old and the new
+app version working (add a nullable column first, make it required in a later
+migration), so deploys and rollbacks stay safe. Adding a column also means
+updating `postgres_repository.py` and this README's data model.
+
 ## Configuration (environment variables)
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `DATABASE_URL` | *(unset)* | Postgres connection URL. Set → Postgres adapter; unset → JSON file adapter |
+| `DATABASE_URL` | *(unset)* | Postgres connection URL. Set → Postgres adapter; unset → JSON file adapter. Also used by `alembic upgrade head` |
 | `SEED_FILE` | *(unset)* | JSON file loaded into an empty `users` table on first connect (Postgres only) |
 | `DATA_FILE` | `data/users.json` | JSON adapter's data file (read and written) when `DATABASE_URL` is unset |
 | `LOG_LEVEL` | `INFO` | Log verbosity |
