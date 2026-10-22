@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-Shared architecture rules and the container checklist live in `../CLAUDE.md`.
+Shared architecture rules and the container checklist live in `../CLAUDE.md` (from the [news-app-platform](https://github.com/ankurvapte/news-app-platform) repo).
 
 users-svc: user accounts and profiles for the news app. No login, passwords or tokens (future auth service).
 `README.md` is the public contract. Keep it in sync when the data model, endpoints or env vars change.
