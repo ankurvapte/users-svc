@@ -8,10 +8,30 @@ services:
       LOG_LEVEL: INFO
       DEFAULT_PAGE_SIZE: "10"
       MAX_PAGE_SIZE: "50"
+      # Dev-only default password; set USERS_DB_PASSWORD in your shell or .env for anything else.
+      DATABASE_URL: postgresql://users:${USERS_DB_PASSWORD:-users-dev-password}@users-db:5432/users
+      SEED_FILE: /app/data/users.json
+    depends_on:
+      users-db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Database per service: only users-svc talks to this. No host port is
+  # published; use `docker compose exec users-db psql -U users` to look inside.
+  users-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: users
+      POSTGRES_PASSWORD: ${USERS_DB_PASSWORD:-users-dev-password}
+      POSTGRES_DB: users
     volumes:
-      # Persists users.json across restarts until the Postgres adapter lands.
-      - users-data:/app/data
+      - users-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U users -d users"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     restart: unless-stopped
 
 volumes:
-  users-data:
+  users-db-data:

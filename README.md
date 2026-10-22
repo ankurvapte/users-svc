@@ -13,7 +13,9 @@ app/
 │   ├── ports.py                # UserRepository interface, StorageUnavailable
 │   └── use_cases.py            # UserService: list, get, create, update
 ├── infrastructure/
-│   └── json_repository.py      # Reads/writes data/users.json (swap for Postgres later)
+│   ├── postgres_repository.py  # PostgreSQL adapter (used when DATABASE_URL is set)
+│   ├── schema.sql              # users table, applied on first connect
+│   └── json_repository.py      # JSON file adapter (used when DATABASE_URL is not set)
 ├── api/
 │   ├── schemas.py              # Public API contract (request + response models)
 │   ├── routes.py               # /api/v1/* endpoints
@@ -21,7 +23,7 @@ app/
 ├── config.py                   # Settings from environment variables
 ├── logging_setup.py            # JSON logs to stdout
 └── main.py                     # Composition root: wires layers together
-data/users.json                 # 5 seed users (4 active, 1 disabled)
+data/users.json                 # 5 seed users (4 active, 1 disabled); SEED_FILE for Postgres
 tests/                          # Unit tests (no deps) + API tests (FastAPI)
 ```
 
@@ -62,7 +64,7 @@ Errors always look like:
 | 404 | `not_found` | Unknown user id |
 | 409 | `conflict` | Email already used by another user |
 | 422 | `validation_error` | Bad email, blank/long name, unknown field, empty PATCH, bad enum |
-| 503 | `storage_unavailable` | The write could not be persisted |
+| 503 | `storage_unavailable` | The database is unreachable, or the write could not be persisted |
 
 ## Run it
 
@@ -77,14 +79,20 @@ curl -X PATCH localhost:8081/api/v1/users/<id> \
   -H 'content-type: application/json' -d '{"status":"disabled"}'
 ```
 
-Data lives on the named volume `users-data` (mounted at `/app/data`). The
-first time the volume is created, Docker fills it with the seed `users.json`
-from the image. After that, writes survive `docker compose restart` and
-`down`/`up`. To reset to the seed data, run `docker compose down -v`.
+Compose starts two containers: `users-svc` and its own Postgres, `users-db`
+(database per service). users-svc waits until the database is healthy. On
+first connect it creates the `users` table and, because `SEED_FILE` is set,
+loads the 5 seed users into the empty table. Data lives on the named volume
+`users-db-data`, so it survives `restart` and `down`/`up`. To reset to the
+seed data, run `docker compose down -v`.
 
-The JSON adapter is for **a single replica only**: two containers writing the
-same file would overwrite each other. The Postgres adapter on the roadmap
-removes that limit.
+The database publishes no host port. To look inside:
+```bash
+docker compose exec users-db psql -U users -c "SELECT email, status FROM users"
+```
+
+If the database goes down, users-svc stays up: `/health/ready` returns 503 and
+requests return `503 storage_unavailable` until it is back.
 
 **Without Docker:**
 ```bash
@@ -92,8 +100,9 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
 uvicorn app.main:app --reload --port 8081
 ```
-Note: running locally writes to `data/users.json` itself. Use
-`DATA_FILE=/tmp/users.json` (with a copy of the seed) to keep it clean.
+Without `DATABASE_URL` this uses the JSON file adapter and writes to
+`data/users.json` itself. Use `DATA_FILE=/tmp/users.json` (with a copy of the
+seed) to keep it clean. The JSON adapter is for **a single replica only**.
 
 ## Test it
 
@@ -103,11 +112,21 @@ pytest                                                        # all tests, needs
 ```
 Tests work on temporary copies of the seed file, so they never modify it.
 
+The Postgres adapter tests need a throwaway database (they drop the table) and
+are skipped without one:
+```bash
+docker run --rm -d --name users-test-db -e POSTGRES_PASSWORD=test -p 55432:5432 postgres:17-alpine
+TEST_DATABASE_URL=postgresql://postgres:test@localhost:55432/postgres pytest tests/test_postgres_repository.py
+docker stop users-test-db
+```
+
 ## Configuration (environment variables)
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `DATA_FILE` | `data/users.json` | Path to the user data (read and written) |
+| `DATABASE_URL` | *(unset)* | Postgres connection URL. Set → Postgres adapter; unset → JSON file adapter |
+| `SEED_FILE` | *(unset)* | JSON file loaded into an empty `users` table on first connect (Postgres only) |
+| `DATA_FILE` | `data/users.json` | JSON adapter's data file (read and written) when `DATABASE_URL` is unset |
 | `LOG_LEVEL` | `INFO` | Log verbosity |
 | `DEFAULT_PAGE_SIZE` | `10` | Page size when none is given |
 | `MAX_PAGE_SIZE` | `50` | Upper bound on `page_size` |
@@ -116,7 +135,7 @@ Tests work on temporary copies of the seed file, so they never modify it.
 
 ## Which pillars this covers
 
-1 one capability (users) · 2 clean layers · 3 stateless container (state on a
-volume) · 4 env config · 6 versioned contract + consistent errors ·
-7 multi-stage, non-root image · 8 health probes, JSON logs, request IDs ·
-9 graceful startup/shutdown. Still to come: 5 (own database), 10 (CI/CD + gateway).
+1 one capability (users) · 2 clean layers · 3 stateless container (state in
+Postgres) · 4 env config · 5 own database · 6 versioned contract + consistent
+errors · 7 multi-stage, non-root image · 8 health probes, JSON logs, request IDs ·
+9 graceful startup/shutdown, timeouts on database calls. Still to come: 10 (CI/CD + gateway).

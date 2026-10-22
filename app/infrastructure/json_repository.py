@@ -2,8 +2,8 @@
 
 This is the only place that knows the data lives in a file. In Docker the
 file sits on a named volume, so writes survive container restarts. It only
-works for a single replica; PostgresUserRepository will lift that limit
-without touching other layers.
+works for a single replica; PostgresUserRepository lifts that limit
+without touching other layers. Used when DATABASE_URL is not set.
 """
 from __future__ import annotations
 
@@ -97,3 +97,6 @@ class JsonUserRepository:
 
     def is_ready(self) -> bool:
         return self._loaded
+
+    def close(self) -> None:
+        pass  # nothing to release; every write is already on disk

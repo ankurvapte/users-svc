@@ -15,11 +15,12 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.api import health, routes
-from app.application.ports import StorageUnavailable
+from app.application.ports import StorageUnavailable, UserRepository
 from app.application.use_cases import EmailAlreadyExists, UserNotFound, UserService
-from app.config import load_settings
+from app.config import Settings, load_settings
 from app.domain.models import InvalidUser
 from app.infrastructure.json_repository import JsonUserRepository
+from app.infrastructure.postgres_repository import PostgresUserRepository
 from app.logging_setup import configure_logging
 
 settings = load_settings()
@@ -27,10 +28,19 @@ configure_logging(settings.service_name, settings.log_level)
 logger = logging.getLogger("users")
 
 
+def build_repository(settings: Settings) -> UserRepository:
+    # The only place that picks an adapter; use cases only see the port.
+    if settings.database_url:
+        logger.info("Using Postgres storage")  # never log the URL: it holds the password
+        return PostgresUserRepository(settings.database_url, settings.seed_file)
+    logger.info("Using JSON file storage", extra={"path": settings.data_file})
+    return JsonUserRepository(settings.data_file)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: build infrastructure and inject it into the use cases.
-    repository = JsonUserRepository(settings.data_file)
+    repository = build_repository(settings)
     app.state.settings = settings
     app.state.repository = repository
     app.state.user_service = UserService(repository)
@@ -38,6 +48,7 @@ async def lifespan(app: FastAPI):
     yield
     # Shutdown (runs on SIGTERM): close connections, flush buffers, etc.
     logger.info("Service shutting down")
+    repository.close()
 
 
 app = FastAPI(
