@@ -125,6 +125,18 @@ TEST_DATABASE_URL=postgresql://postgres:test@localhost:55432/postgres pytest tes
 docker stop users-test-db
 ```
 
+## CI and images
+
+`.github/workflows/ci.yml` runs on every push:
+1. `test`: `pytest` with a Postgres service container (`TEST_DATABASE_URL` set), so the
+   Postgres and migration tests run too.
+2. `image`: builds the image, smoke-tests it (`/health/ready` must return 200 with the
+   bundled JSON data), then pushes it to GHCR. Runs only if `test` passed.
+
+Images are public: `docker pull ghcr.io/ankurvapte/users-svc:<full commit SHA>`.
+Every pushed commit gets its own SHA tag, which never changes; pushes to `main` also
+move `:main`. Deploy by pinning a SHA tag, never `:main`.
+
 ## Change the schema
 
 The schema lives only in `migrations/versions/`, applied in order and recorded
