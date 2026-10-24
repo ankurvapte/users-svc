@@ -37,6 +37,16 @@ jobs:
     env:
       TEST_DATABASE_URL: postgresql://postgres:test@localhost:5432/postgres
     steps:
+      # TEMPORARY: prints the github context values once so they can be inspected; remove after.
+      - name: Show github context
+        run: |
+          echo "ref:        ${{ github.ref }}"
+          echo "ref_name:   ${{ github.ref_name }}"
+          echo "sha:        ${{ github.sha }}"
+          echo "event:      ${{ github.event_name }}"
+          echo "repository: ${{ github.repository }}"
+          echo "actor:      ${{ github.actor }}"
+          env | grep ^GITHUB_ | sort
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with:
