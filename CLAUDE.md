@@ -13,7 +13,7 @@ users-svc: user accounts and profiles for the news app. No login, passwords or t
 - Run locally: `uvicorn app.main:app --reload --port 8081` → http://localhost:8081/docs (no `DATABASE_URL`, so it writes to `DATA_FILE`)
 - Run in Docker: `docker compose up --build` (users-svc on host port 8081 + `users-db` Postgres + one-shot `users-migrate`); reset data with `docker compose down -v`
 - New migration: `alembic revision -m "<what>" --rev-id <next 4-digit number>` (no DB needed), then write plain SQL with `op.execute`
-- CI: `.github/workflows/ci.yml` (same file in every service repo; keep them in sync). Every push runs `pytest` with a Postgres service container, builds the image, smoke-tests `/health/ready`, then pushes `ghcr.io/ankurvapte/users-svc:<full sha>` (plus `:main` on main). Check runs on the repo's Actions tab.
+- CI: `.github/workflows/ci.yml` (same file in every service repo; keep them in sync). Runs on `ubuntu-24.04-arm` and builds `linux/arm64` only. Every push runs `pytest` with a Postgres service container, builds the image, smoke-tests `/health/ready`, then pushes `ghcr.io/ankurvapte/users-svc:<full sha>` (plus `:main` on main). Check runs on the repo's Actions tab.
 - No linter/formatter or pytest config is set up.
 
 ## Service-specific notes

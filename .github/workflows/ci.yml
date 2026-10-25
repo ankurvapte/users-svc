@@ -1,6 +1,8 @@
 # CI: on every push, run all tests (Postgres included), build the image,
 # check that it starts, and push it to GHCR tagged with the full commit SHA.
 # Pushes to main also move the :main tag. Deploying a tag is CD's job, not this one.
+# Runs on GitHub's native ARM runners and builds linux/arm64 only: the server is
+# an AWS Graviton (ARM) instance and dev Macs are Apple silicon, so no emulation anywhere.
 name: ci
 
 on:
@@ -19,7 +21,7 @@ env:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 10
     services:
       # Throwaway database for test_postgres_repository.py, which drops and re-migrates its tables.
@@ -58,7 +60,7 @@ jobs:
 
   image:
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
     permissions:
       contents: read
@@ -79,6 +81,7 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
+          platforms: linux/arm64
           load: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
