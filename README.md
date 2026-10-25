@@ -136,6 +136,10 @@ docker stop users-test-db
 Images are `linux/arm64` only (built natively on ARM runners; the server is AWS Graviton). Images are public: `docker pull ghcr.io/ankurvapte/users-svc:<full commit SHA>`.
 Every pushed commit gets its own SHA tag, which never changes; pushes to `main` also
 move `:main`. Deploy by pinning a SHA tag, never `:main`.
+3. `deploy-bump` (main only, after `image`): pins the new SHA in
+   [news-app-platform](https://github.com/ankurvapte/news-app-platform)'s
+   `docker-compose.yml`; its updater then deploys it (pull-based CD). Needs the
+   repo secret `PLATFORM_REPO_TOKEN`; without it the job only warns.
 
 ## Change the schema
 

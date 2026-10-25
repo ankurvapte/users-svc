@@ -1,6 +1,7 @@
 # CI: on every push, run all tests (Postgres included), build the image,
 # check that it starts, and push it to GHCR tagged with the full commit SHA.
-# Pushes to main also move the :main tag. Deploying a tag is CD's job, not this one.
+# Pushes to main also move the :main tag, and the deploy-bump job pins the new
+# SHA in news-app-platform (CD step 1); the updater there deploys it.
 # Runs on GitHub's native ARM runners and builds linux/arm64 only: the server is
 # an AWS Graviton (ARM) instance and dev Macs are Apple silicon, so no emulation anywhere.
 name: ci
@@ -109,3 +110,49 @@ jobs:
 
       - name: Summary
         run: echo "Pushed \`$IMAGE:$GITHUB_SHA\`" >> "$GITHUB_STEP_SUMMARY"
+
+  # CD step 1: pin this commit's image in news-app-platform's docker-compose.yml
+  # (main only). The updater on the deploy machine notices the new commit there
+  # and deploys it. Needs the PLATFORM_REPO_TOKEN secret (fine-grained token,
+  # Contents: read and write on news-app-platform only); skipped without it.
+  deploy-bump:
+    needs: image
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    env:
+      TOKEN: ${{ secrets.PLATFORM_REPO_TOKEN }}
+      SVC: ${{ github.event.repository.name }}
+    steps:
+      - name: Skip without token
+        if: env.TOKEN == ''
+        run: echo "::warning::PLATFORM_REPO_TOKEN is not set; not pinning the image in news-app-platform"
+
+      - if: env.TOKEN != ''
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ github.repository_owner }}/news-app-platform
+          token: ${{ secrets.PLATFORM_REPO_TOKEN }}
+          path: platform
+
+      - name: Pin ${{ github.event.repository.name }}:${{ github.sha }}
+        if: env.TOKEN != ''
+        working-directory: platform
+        run: |
+          name="${SVC%-svc}"   # articles-svc → articles (the x-articles-image anchor)
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Both services may bump at the same moment: on a rejected push, rebase and retry.
+          for attempt in 1 2 3 4 5; do
+            git pull -q --rebase origin main
+            sed -i "s|^\(x-$name-image: &$name-image ghcr.io/[^:]*:\).*|\1$GITHUB_SHA|" docker-compose.yml
+            if git diff --quiet; then echo "Already pinned to $GITHUB_SHA"; exit 0; fi
+            git commit -q -am "Deploy $SVC ${GITHUB_SHA::7}" -m "Image ghcr.io/$GITHUB_REPOSITORY:$GITHUB_SHA from $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$GITHUB_SHA"
+            if git push -q origin HEAD:main; then
+              echo "Pinned \`$SVC:$GITHUB_SHA\` in news-app-platform" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            git reset -q --hard origin/main
+            sleep $((attempt * 3))
+          done
+          echo "::error::Could not push the bump after 5 attempts"; exit 1
